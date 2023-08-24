@@ -6,7 +6,7 @@ use netlink_packet_utils::{
     nla::{DefaultNla, Nla, NlaBuffer, NlasIterator},
     parsers::{
         parse_i32, parse_mac, parse_string, parse_u16, parse_u16_be, parse_u32,
-        parse_u8,
+        parse_u64, parse_u8,
     },
     traits::{Emitable, Parseable},
     DecodeError,
@@ -39,6 +39,7 @@ const GTP: &str = "gtp";
 const IPOIB: &str = "ipoib";
 const WIREGUARD: &str = "wireguard";
 const XFRM: &str = "xfrm";
+const MACSEC: &str = "macsec";
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[non_exhaustive]
@@ -323,6 +324,17 @@ impl<'a, T: AsRef<[u8]> + ?Sized> Parseable<NlaBuffer<&'a T>> for VecInfo {
                                 }
                                 InfoData::Xfrm(v)
                             }
+                            InfoKind::MacSec => {
+                                let mut v = Vec::new();
+                                let err = "failed to parse IFLA_INFO_DATA (IFLA_INFO_KIND is 'macsec')";
+                                for nla in NlasIterator::new(payload) {
+                                    let nla = &nla.context(err)?;
+                                    let parsed =
+                                        InfoMacSec::parse(nla).context(err)?;
+                                    v.push(parsed);
+                                }
+                                InfoData::MacSec(v)
+                            }
                         };
                         res.push(Info::Data(info_data));
                     } else {
@@ -368,6 +380,7 @@ pub enum InfoData {
     Ipoib(Vec<InfoIpoib>),
     Wireguard(Vec<u8>),
     Xfrm(Vec<InfoXfrmTun>),
+    MacSec(Vec<InfoMacSec>),
     Other(Vec<u8>),
 }
 
@@ -387,6 +400,7 @@ impl Nla for InfoData {
             Vrf(ref nlas) => nlas.as_slice().buffer_len(),
             Vxlan(ref nlas) => nlas.as_slice().buffer_len(),
             Xfrm(ref nlas)  => nlas.as_slice().buffer_len(),
+            MacSec(ref nlas) => nlas.as_slice().buffer_len(),
             Dummy(ref bytes)
                 | Tun(ref bytes)
                 | Nlmon(ref bytes)
@@ -420,6 +434,7 @@ impl Nla for InfoData {
             Vrf(ref nlas) => nlas.as_slice().emit(buffer),
             Vxlan(ref nlas) => nlas.as_slice().emit(buffer),
             Xfrm(ref nlas)  => nlas.as_slice().emit(buffer),
+            MacSec(ref nlas) => nlas.as_slice().emit(buffer),
             Dummy(ref bytes)
                 | Tun(ref bytes)
                 | Nlmon(ref bytes)
@@ -501,6 +516,7 @@ pub enum InfoKind {
     Ipoib,
     Wireguard,
     Xfrm,
+    MacSec,
     Other(String),
 }
 
@@ -532,6 +548,7 @@ impl Nla for InfoKind {
             Ipoib => IPOIB.len(),
             Wireguard => WIREGUARD.len(),
             Xfrm => XFRM.len(),
+            MacSec => MACSEC.len(),
             Other(ref s) => s.len(),
         };
         len + 1
@@ -564,6 +581,7 @@ impl Nla for InfoKind {
             Ipoib => IPOIB,
             Wireguard => WIREGUARD,
             Xfrm => XFRM,
+            MacSec => MACSEC,
             Other(ref s) => s.as_str(),
         };
         buffer[..s.len()].copy_from_slice(s.as_bytes());
@@ -611,6 +629,7 @@ impl<'a, T: AsRef<[u8]> + ?Sized> Parseable<NlaBuffer<&'a T>> for InfoKind {
             GTP => Gtp,
             IPOIB => Ipoib,
             WIREGUARD => Wireguard,
+            MACSEC => MacSec,
             _ => Other(s),
         })
     }
@@ -1217,6 +1236,151 @@ impl<'a, T: AsRef<[u8]> + ?Sized> Parseable<NlaBuffer<&'a T>> for InfoIpVlan {
             IFLA_IPVLAN_FLAGS => Flags(
                 parse_u16(payload)
                     .context("invalid IFLA_IPVLAN_FLAGS value")?,
+            ),
+            kind => Other(
+                DefaultNla::parse(buf)
+                    .context(format!("unknown NLA type {kind}"))?,
+            ),
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+#[non_exhaustive]
+pub enum InfoMacSec {
+    Unspec(Vec<u8>),
+    Sci(u64),
+    Port(u16),
+    IcvLen(u8),
+    CipherSuite(u64),
+    Window(u32),
+    EncodingSa(u8),
+    Encrypt(u8),
+    Protect(u8),
+    IncSci(u8),
+    Es(u8),
+    Scb(u8),
+    ReplayProtect(u8),
+    Validation(u8),
+    Offload(u8),
+    Other(DefaultNla),
+}
+
+impl Nla for InfoMacSec {
+    fn value_len(&self) -> usize {
+        use self::InfoMacSec::*;
+        match self {
+            Unspec(bytes) => bytes.len(),
+            Sci(_) | CipherSuite(_) => 8,
+            Window(_) => 4,
+            Port(_) => 2,
+            IcvLen(_) | EncodingSa(_) | Encrypt(_) | Protect(_) | IncSci(_)
+            | Es(_) | Scb(_) | ReplayProtect(_) | Validation(_)
+            | Offload(_) => 1,
+            Other(nla) => nla.value_len(),
+        }
+    }
+
+    fn emit_value(&self, buffer: &mut [u8]) {
+        use self::InfoMacSec::*;
+        match self {
+            Unspec(bytes) => buffer.copy_from_slice(bytes.as_slice()),
+            Sci(value) | CipherSuite(value) => {
+                NativeEndian::write_u64(buffer, *value)
+            }
+            Window(value) => NativeEndian::write_u32(buffer, *value),
+            Port(value) => NativeEndian::write_u16(buffer, *value),
+            IcvLen(value) | EncodingSa(value) | Encrypt(value)
+            | Protect(value) | IncSci(value) | Es(value) | Scb(value)
+            | ReplayProtect(value) | Validation(value) | Offload(value) => {
+                buffer[0] = *value
+            }
+            Other(nla) => nla.emit_value(buffer),
+        }
+    }
+
+    fn kind(&self) -> u16 {
+        use self::InfoMacSec::*;
+        match self {
+            Unspec(_) => IFLA_MACSEC_UNSPEC,
+            Sci(_) => IFLA_MACSEC_SCI,
+            Port(_) => IFLA_MACSEC_PORT,
+            IcvLen(_) => IFLA_MACSEC_ICV_LEN,
+            CipherSuite(_) => IFLA_MACSEC_CIPHER_SUITE,
+            Window(_) => IFLA_MACSEC_WINDOW,
+            EncodingSa(_) => IFLA_MACSEC_ENCODING_SA,
+            Encrypt(_) => IFLA_MACSEC_ENCRYPT,
+            Protect(_) => IFLA_MACSEC_PROTECT,
+            IncSci(_) => IFLA_MACSEC_INC_SCI,
+            Es(_) => IFLA_MACSEC_ES,
+            Scb(_) => IFLA_MACSEC_SCB,
+            ReplayProtect(_) => IFLA_MACSEC_REPLAY_PROTECT,
+            Validation(_) => IFLA_MACSEC_VALIDATION,
+            Offload(_) => IFLA_MACSEC_OFFLOAD,
+            Other(nla) => nla.kind(),
+        }
+    }
+}
+
+impl<'a, T: AsRef<[u8]> + ?Sized> Parseable<NlaBuffer<&'a T>> for InfoMacSec {
+    fn parse(buf: &NlaBuffer<&'a T>) -> Result<Self, DecodeError> {
+        use self::InfoMacSec::*;
+        let payload = buf.value();
+        Ok(match buf.kind() {
+            IFLA_MACSEC_UNSPEC => Unspec(payload.to_vec()),
+            IFLA_MACSEC_SCI => {
+                Sci(parse_u64(payload)
+                    .context("invalid IFLA_MACSEC_SCI value")?)
+            }
+            IFLA_MACSEC_PORT => Port(
+                parse_u16(payload).context("invalid IFLA_MACSEC_PORT value")?,
+            ),
+            IFLA_MACSEC_ICV_LEN => IcvLen(
+                parse_u8(payload)
+                    .context("invalid IFLA_MACSEC_ICV_LEN value")?,
+            ),
+            IFLA_MACSEC_CIPHER_SUITE => CipherSuite(
+                parse_u64(payload)
+                    .context("invalid IFLA_MACSEC_CIPHER_SUITE value")?,
+            ),
+            IFLA_MACSEC_WINDOW => Window(
+                parse_u32(payload)
+                    .context("invalid IFLA_MACSEC_WINDOW value")?,
+            ),
+            IFLA_MACSEC_ENCODING_SA => EncodingSa(
+                parse_u8(payload)
+                    .context("invalid IFLA_MACSEC_ENCODING_SA value")?,
+            ),
+            IFLA_MACSEC_ENCRYPT => Encrypt(
+                parse_u8(payload)
+                    .context("invalid IFLA_MACSEC_ENCRYPT value")?,
+            ),
+            IFLA_MACSEC_PROTECT => Protect(
+                parse_u8(payload)
+                    .context("invalid IFLA_MACSEC_PROTECT value")?,
+            ),
+            IFLA_MACSEC_INC_SCI => IncSci(
+                parse_u8(payload)
+                    .context("invalid IFLA_MACSEC_INC_SCI value")?,
+            ),
+            IFLA_MACSEC_ES => {
+                Es(parse_u8(payload).context("invalid IFLA_MACSEC_ES value")?)
+            }
+            IFLA_MACSEC_SCB => {
+                Scb(parse_u8(payload)
+                    .context("invalid IFLA_MACSEC_SCB value")?)
+            }
+            IFLA_MACSEC_REPLAY_PROTECT => ReplayProtect(
+                parse_u8(payload)
+                    .context("invalid IFLA_MACSEC_REPLAY_PROTECT value")?,
+            ),
+            IFLA_MACSEC_VALIDATION => Validation(
+                parse_u8(payload)
+                    .context("invalid IFLA_MACSEC_VALIDATION value")?,
+            ),
+            IFLA_MACSEC_OFFLOAD => Offload(
+                parse_u8(payload)
+                    .context("invalid IFLA_MACSEC_OFFLOAD value")?,
             ),
             kind => Other(
                 DefaultNla::parse(buf)
