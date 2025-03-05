@@ -14,6 +14,7 @@ mod hsr;
 mod info_data;
 mod info_port;
 mod infos;
+mod ipip;
 mod ipoib;
 mod ipvlan;
 mod mac_vlan;
@@ -46,6 +47,7 @@ pub use self::hsr::{HsrProtocol, InfoHsr};
 pub use self::info_data::InfoData;
 pub use self::info_port::{InfoPortData, InfoPortKind, InfoVrfPort};
 pub use self::infos::{InfoKind, LinkInfo};
+pub use self::ipip::{TunnelEncapType, TunnelEncapFlags, InfoIpIp};
 pub use self::ipoib::InfoIpoib;
 pub use self::ipvlan::{
     InfoIpVlan, InfoIpVtap, IpVlanFlags, IpVlanMode, IpVtapFlags, IpVtapMode,

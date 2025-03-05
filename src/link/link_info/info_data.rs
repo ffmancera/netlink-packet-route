@@ -9,7 +9,7 @@ use netlink_packet_utils::{
 
 use super::super::{
     InfoBond, InfoBridge, InfoGeneve, InfoGreTap, InfoGreTap6, InfoGreTun,
-    InfoGreTun6, InfoGtp, InfoHsr, InfoIpVlan, InfoIpVtap, InfoIpoib, InfoKind,
+    InfoGreTun6, InfoGtp, InfoHsr, InfoIpIp, InfoIpVlan, InfoIpVtap, InfoIpoib, InfoKind,
     InfoMacSec, InfoMacVlan, InfoMacVtap, InfoSitTun, InfoTun, InfoVeth,
     InfoVlan, InfoVrf, InfoVti, InfoVxlan, InfoXfrm,
 };
@@ -42,6 +42,7 @@ pub enum InfoData {
     MacSec(Vec<InfoMacSec>),
     Hsr(Vec<InfoHsr>),
     Geneve(Vec<InfoGeneve>),
+    IpIp(Vec<InfoIpIp>),
     Other(Vec<u8>),
 }
 
@@ -71,6 +72,7 @@ impl Nla for InfoData {
             Self::Vti(nlas) => nlas.as_slice().buffer_len(),
             Self::Gtp(nlas) => nlas.as_slice().buffer_len(),
             Self::Geneve(nlas) => nlas.as_slice().buffer_len(),
+            Self::IpIp(nlas) => nlas.as_slice().buffer_len(),
             Self::Other(v) => v.len(),
         }
     }
@@ -100,6 +102,7 @@ impl Nla for InfoData {
             Self::Vti(nlas) => nlas.as_slice().emit(buffer),
             Self::Gtp(nlas) => nlas.as_slice().emit(buffer),
             Self::Geneve(nlas) => nlas.as_slice().emit(buffer),
+            Self::IpIp(nlas) => nlas.as_slice().emit(buffer),
             Self::Other(v) => buffer.copy_from_slice(v.as_slice()),
         }
     }
@@ -352,6 +355,17 @@ impl InfoData {
                     v.push(parsed);
                 }
                 InfoData::Hsr(v)
+            }
+            InfoKind::IpTun => {
+                let mut v = Vec::new();
+                for nla in NlasIterator::new(payload) {
+                    let nla = &nla.context(format!(
+                        "invalid IFLA_INFO_DATA for {kind} {payload:?}"
+                    ))?;
+                    let parsed = InfoIpIp::parse(nla)?;
+                    v.push(parsed);
+                }
+                InfoData::IpIp(v)
             }
             InfoKind::Geneve => {
                 let mut v = Vec::new();
