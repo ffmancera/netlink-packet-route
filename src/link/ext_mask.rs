@@ -93,6 +93,7 @@ impl From<&VecLinkExtentMask> for u32 {
         for flag in &v.0 {
             d += u32::from(*flag);
         }
+        println!("we got value: {:?}", d);
         d
     }
 }
